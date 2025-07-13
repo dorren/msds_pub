@@ -1,0 +1,163 @@
+---
+title: "week3_nypd"
+author: "Dorren"
+date: "2025-06-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# NYPD Crimes Data Analysis
+
+source file location: https://catalog.data.gov/dataset and find the dataset titled NYPD Shooting Incident Data (Historic). 
+
+```{r get_input}
+library(tidyverse)
+
+file_path <- "NYPD_Shooting_Incident_Data__Historic_.csv"
+data <- read_csv(file_path)
+
+```
+
+# Crimes Per Year
+```{r per_year, echo=TRUE}
+library(dplyr)
+library(lubridate)
+library(janitor)
+
+# count incidents per year
+data$year <- year(mdy(data$OCCUR_DATE))
+by_year <-
+  data %>%
+  select(year) %>%
+  group_by(year) %>%
+  summarise(count = n()) %>%
+  arrange(year)
+
+``` 
+
+``` {r by_year_graph, echo=TRUE}
+by_year %>%
+  ggplot(aes(x=year, y=count)) +
+  geom_line() +
+  ggtitle("Incidents per Year") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+This graph shows crimes per year is decreasing for past 20 years. From the peak of 2055 incidents in year 2006 to the lowest of 958 in year 2018, except the spike during the 2020-2021 Covid period.
+
+# Prediction of Future Crimes
+
+```{r model_prediction, echo=TRUE}
+crime_model <- lm(count ~ year, data=by_year)
+all_years <- data.frame(year = 2006:2030)
+pred_counts <- predict(crime_model, newdata = all_years)
+pred_counts_df <- tibble(year=2006:2030, pred_count=pred_counts)
+combined <- full_join(by_year, pred_counts_df, by="year")
+
+combined %>%
+  ggplot(aes(x=year, y=count)) +
+  geom_line() +
+  geom_line(aes(y=pred_count, color="predicted")) +
+  ggtitle("Incidents per Year with Prediction") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+The prediction concurs with our findings earlier, crimes are decreasing gradually year by year. However, the spike during the Covid period skew the data upwards, which could be a source of bias. Without this upward spike, future crime rates could be even lower.
+
+
+
+# Crimes by Year and Borough
+
+```{r per_year_boro, echo=TRUE}
+by_year_boro <-
+  data %>%
+  select(year, BORO) %>%
+  group_by(year, BORO) %>%
+  summarise(count = n()) %>%
+  arrange(year, BORO) %>%
+  pivot_wider(names_from = BORO, values_from = count) %>%
+  clean_names()
+
+by_year_boro %>%
+  ggplot(aes(x=year)) +
+  geom_line(aes(y=bronx, color="Bronx")) +
+  geom_line(aes(y=brooklyn, color="Brooklyn")) +
+  geom_line(aes(y=manhattan, color="Manhattan")) +
+  geom_line(aes(y=queens, color="Queens")) +
+  geom_line(aes(y=staten_island, color="Staten Island")) +
+  ggtitle("Incidents per Year per Borough") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Now we segregate the data by year and boroughs, we can see Bronx and Brooklyn have the most crimes, and Staten Island has the lowest crime count.
+
+
+# 2024 Incidents on Map
+
+
+```{r in_map, echo=TRUE, fig.align='left'}
+# install.packages("maps") if not installed
+library(maps)
+
+states_map <- map_data("state")
+county_map <- map_data("county")
+
+nyc_map <- subset(map_data("county"),
+                  region == "new york" & subregion %in% 
+                    c("bronx", "kings", "new york", "queens", "richmond"))
+
+crimes2024 <- data %>%
+  filter(year == 2024) %>%
+  select(Latitude, Longitude) %>%
+  filter(Latitude != "", !is.na(Latitude)) %>%
+  filter(Longitude != "", !is.na(Longitude))
+
+crimes2024 %>%
+  ggplot() +
+  geom_polygon(data = nyc_map, aes(x = long, y = lat, group = group),
+               fill = "gray90", color = "white") +
+  geom_point(data = crimes2024, aes(x = Longitude, y = Latitude), size = 1) +
+  coord_fixed(xlim = c(-74.05, -73.70), ylim = c(40.55, 40.90), ratio = 1.25) +
+  theme_minimal() +
+  ggtitle("Year 2024 Incidents in NYC Map") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+This graph shows all the incidents occurred in 2024. We can see the highest concentration of data points are in Bronx, then Brooklyn.
+
+# Identify Bias
+
+```{r bias, echo=TRUE}
+library(stringr)
+
+data2 <- data %>%
+  mutate(PERP_RACE = ifelse(is.na(PERP_RACE) | PERP_RACE == "(null)", "UNKNOWN", PERP_RACE))
+
+by_race <- data2 %>% 
+  select(PERP_RACE) %>%
+  group_by(PERP_RACE) %>%
+  summarise(count = n()) %>%
+  arrange(count) %>%
+  filter(PERP_RACE != "UNKNOWN")
+
+by_race <- by_race %>% 
+  mutate(percent = round(count / sum(count) * 100, 2)) %>% 
+  arrange(percent)
+
+by_race$PERP_RACE <- str_replace(by_race$PERP_RACE, "AMERICAN INDIAN/ALASKAN NATIVE", "NATIVE")
+by_race$PERP_RACE <- str_replace(by_race$PERP_RACE, "ASIAN / PACIFIC ISLANDER", "ASIAN")
+
+by_race %>%
+  ggplot(aes(x=reorder(PERP_RACE, percent), y=percent)) +
+  geom_col() + 
+  ggtitle("Incidents Committed by Race") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x="race")
+
+```
+By grouping the data by perpetrator's race, 72.6% of them are black. This seems overwhelming high. To prove such hypothesis, we need to combine it with city's ethnic composition data, or even compare with other major city's crime data to find out whether this high percentage is valid or biased.
+
+# sessionInfo
+```{r session-info, echo=TRUE}
+sessionInfo()
+```

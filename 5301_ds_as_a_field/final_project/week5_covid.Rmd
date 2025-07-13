@@ -1,0 +1,427 @@
+---
+title: "week5_covid"
+author: "Dorren Chen"
+date: "2025-07-12"
+output: pdf_document
+---
+
+# Covid Data Analysis
+
+```{r setup}
+suppressPackageStartupMessages({
+  library(knitr)
+})
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+## packages used in this notebook
+# install.packages(c("tidyverse", "dplyr", "lubridate", "janitor", "scales"))
+# install.packages(c("leaflet", "sf", "maps", "webshot2", "htmlwidgets", "colorspace"))
+```
+
+## Data Source
+
+Based on [Project instruction](https://www.coursera.org/learn/data-science-as-a-field/supplement/cXrpr/project-files), all source data files are from [github.com](https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series)
+
+* time_series_covid19_confirmed_US.csv
+* time_series_covid19_confirmed_global.csv
+* time_series_covid19_deaths_US.csv
+* time_series_covid19_deaths_global.csv
+
+download these 4 files and put into a local folder named "data".
+
+```{r get_input}
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
+
+# download files to local folder data/ first.
+path1 <- "data/time_series_covid19_confirmed_global.csv"
+path2 <- "data/time_series_covid19_confirmed_US.csv"
+path3 <- "data/time_series_covid19_deaths_global.csv"
+path4 <- "data/time_series_covid19_deaths_US.csv"
+
+case_gbl  <- read_csv(path1, show_col_types = FALSE)
+case_us   <- read_csv(path2, show_col_types = FALSE)
+death_gbl <- read_csv(path3, show_col_types = FALSE)
+death_us  <- read_csv(path4, show_col_types = FALSE)
+```
+
+
+```{r clean_input}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(lubridate)
+  library(janitor)
+})
+
+# convert columns into rows. 
+pivot_date_columns <- function(df, exclude_columns, header_name, val_name) {
+  df2 <- df %>% 
+    pivot_longer(cols = -all_of(exclude_columns),
+                 names_to = header_name, 
+                 values_to = val_name) %>%
+    mutate(date = mdy(date))
+  
+  return(df2)
+}
+
+# load US cases data
+exclude_columns = c("UID","iso2","iso3","code3","FIPS","Admin2","Province_State","Country_Region","Lat","Long_","Combined_Key")
+header_name = "date"
+val_name    = "cases"
+case_us2 <- pivot_date_columns(case_us, exclude_columns, header_name, val_name)
+
+# load US death data
+exclude_columns <- append(exclude_columns, "Population")
+death_us2 <- pivot_date_columns(death_us, exclude_columns, header_name, val_name)
+
+# load global cases and death data
+exclude_columns <- c("Province/State", "Country/Region", "Lat", "Long")
+case_gbl2 <- pivot_date_columns(case_gbl, exclude_columns, header_name, val_name)
+death_gbl2 <- pivot_date_columns(death_gbl, exclude_columns, header_name, val_name)
+```
+
+
+```{r analyze_us_cases}
+suppressPackageStartupMessages({
+  library(scales)
+})
+
+# add daily new_cases column
+df <- case_us2 %>%
+  select("date", "cases") %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases)) %>%
+  mutate(new_cases = cases - lag(cases))
+
+# no scientific e notation in plot. 
+options(scipen = 999)  
+
+df %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line() +
+  ggtitle("Confirmed Cases in US") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(labels = comma) 
+
+df %>%
+  ggplot(aes(x=date, y=new_cases)) +
+  geom_line() +
+  ggtitle("New Cases in US") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(labels = comma) 
+
+# to smooth the Jaggedness of daily data, we group data by the week
+df2 <- df %>%
+  mutate(week = floor_date(date, unit = "week", week_start = 1)) %>%
+  group_by(week) %>%
+  summarise(
+    weekly_new_cases = sum(new_cases),
+    days_in_week = n()
+  )
+
+
+df2 %>%
+  ggplot(aes(x=week, y=weekly_new_cases)) +
+  geom_line() +
+  ggtitle("Weekly New Cases in US") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(labels = comma)
+
+```
+```{r prediction_for_future_years}
+new_cases_df <- df2
+new_cases_model <- lm(weekly_new_cases ~ poly(week, 2), data=new_cases_df)
+weeks_seq <- seq(from = mdy("01-20-2020"), by = "7 days", length.out = 204)
+pred_counts <- predict(new_cases_model, newdata = data.frame(week=weeks_seq))
+pred_counts_df <- tibble(week=weeks_seq, pred_count=pred_counts)
+pred_counts_df$pred_count <- ifelse(pred_counts_df$pred_count<0, 0, pred_counts_df$pred_count)
+combined_predict_df <- full_join(new_cases_df, pred_counts_df, by="week")
+
+combined_predict_df %>%
+  ggplot(aes(x=week, y=weekly_new_cases)) +
+  geom_line() +
+  geom_line(aes(y=pred_count, color="predicted")) +
+  ggtitle("Weekly New Cases with Prediction") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r us_cases_analysis}
+suppressPackageStartupMessages({
+  library(leaflet)
+  library(sf)
+  library(maps)
+  library(webshot2)
+  library(htmlwidgets)
+  library(colorspace)
+})
+
+# get cases per state
+cases_by_state <- case_us2 %>%
+  select("Province_State", "date", "cases") %>%
+  group_by(Province_State) %>%
+  summarize(cases = max(cases))
+cases_by_state$state <- tolower(cases_by_state$Province_State)
+
+# get death cases per state
+death_by_state <- death_us2 %>%
+  select("Province_State", "date", "cases", "Population") %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(cases), Population=max(Population))
+  
+death_by_state$state <- tolower(death_by_state$Province_State)
+
+combined_by_state <- death_by_state %>%
+  left_join(cases_by_state, by = "state") %>%
+  mutate(ratio= deaths / cases * 100)
+
+# join with state GIS
+states_sf <- sf::st_as_sf(maps::map("state", plot = FALSE, fill = TRUE))
+states_sf <- st_transform(states_sf, crs = 4326)
+
+us_df <- states_sf %>%
+  left_join(combined_by_state, by = c("ID" = "state"))
+```
+
+```{r us_cases_in_map, eval = knitr::is_html_output()}
+# set mapping plot theme
+mapcfg <- "map config"
+attributes(mapcfg) <- list(
+  palette="OrRd", 
+  pal = RColorBrewer::brewer.pal(9, "OrRd"),
+  color="black",
+  opacity = 1,
+  world_lng = 35, 
+  world_lat = 30,
+  world_zoom = 2.2)
+map_attrs <- attributes(mapcfg)
+
+# plot
+plot_us_map <- function(df, col_name, map_name){
+  pal <- colorNumeric(
+    palette = RColorBrewer::brewer.pal(9, map_attrs$palette),
+    domain = range(df[[col_name]], na.rm = TRUE)
+  )
+  
+  leaflet_df <- leaflet(df) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    addPolygons(
+      fillColor = ~pal(df[[col_name]]),
+      color = map_attrs$color,
+      weight = 1,
+      fillOpacity = map_attrs$opacity,
+      highlight = highlightOptions(
+        weight = 2,
+        color = "#666",
+        bringToFront = TRUE
+      ),
+      label = ~paste(ID, "<br>", round(df[[col_name]], 1))
+    ) %>%
+    addLegend(
+      pal = pal,
+      values = ~df[[col_name]],
+      opacity = map_attrs$opacity,
+      title = col_name,
+      position = "bottomright"
+    )
+  
+  saveWidget(leaflet_df, paste(map_name, ".html", sep=""), selfcontained = TRUE)
+  
+  # generate the image file in R studio first, then add the image in markdown after this section.
+  webshot(paste(map_name, ".html", sep=""), file=paste(map_name, ".png", sep=""))
+}
+
+plot_us_map(us_df, "cases", "us_cases")
+plot_us_map(us_df, "deaths", "us_deaths")
+plot_us_map(us_df, "ratio", "us_ratio")
+```
+\newpage
+
+### US confirmed cases
+
+![US confirmed cases](us_cases.png)
+On this graph, we plotted the total cases per state from January 2020 to March 2023. We can see California has the most cases.
+
+
+
+### US deaths
+
+![US deaths](us_deaths.png)
+In this graph, we see California also has the most Covid related deaths, followed by Florida and Arizona.
+
+### US death ratios
+
+![US deaths ratios (deaths/cases)](us_ratio.png)
+In this graph, it shows the death ratio, death / confirmed cases. Interestingly, the highest ratios are in Michigan, Florida, and West Virginia.
+
+```{r us_death_ratio_top5}
+us_top_10 <- combined_by_state %>%
+  select(state, cases, deaths, ratio) %>%
+  filter(!state %in% c("puerto rico","grand princess")) %>%
+  arrange(desc(cases)) %>%
+  head(n=10)
+
+kable(us_top_10, caption= "US top 10 states by cases")
+```
+
+\newpage
+
+# Global Covid Cases
+
+```{r global_analysis}
+# change "Congo (Brazzaville)" to "Congo"
+# change "Congo (Kinshasa)"    to "Dem. Rep. Congo"
+fix_congo <- function(df) {
+  return (df %>% 
+    mutate(country = ifelse(country == "US", "United States of America", country)) %>%
+    mutate(country = ifelse(country == "Korea, South", "South Korea", country)) %>%
+    mutate(country = ifelse(country == "Cote d'Ivoire", "Côte d'Ivoire", country)) %>%
+    mutate(country = ifelse(country == "Congo (Brazzaville)", "Congo", country)) %>%
+    mutate(country = ifelse(country == "Congo (Kinshasa)", "Dem. Rep. Congo", country))
+  )
+}
+
+# cases group by country
+case_gbl3 <- case_gbl2 %>% 
+  rename(country = "Country/Region") %>% 
+  fix_congo %>%
+  group_by(country) %>%
+  summarize(cases=max(cases))
+
+# deaths group by country
+death_gbl3 <- death_gbl2 %>% 
+  rename(country = "Country/Region") %>% 
+  fix_congo %>%
+  group_by(country) %>%
+  summarize(deaths=max(cases))
+
+# cases df join deaths df
+combined_gbl <- death_gbl3 %>%
+  left_join(case_gbl3, by = "country") %>%
+  mutate(ratio = deaths / cases * 100)
+
+# add USA row
+usa_row <- data.frame(
+  country = "United States of America",
+  cases  = sum(combined_by_state$cases),
+  deaths = sum(combined_by_state$deaths)
+) %>%
+  mutate(ratio = deaths / cases * 100)
+
+# combined_gbl <- bind_rows(combined_gbl, usa_row)
+```
+
+```{r global_visualization, eval = knitr::is_html_output()}
+suppressPackageStartupMessages({
+  library(leaflet)
+  library(sf)
+  library(maps)
+  library(webshot2)
+  library(htmlwidgets)
+  library(viridis)
+  library(rnaturalearth)
+  library(rnaturalearthdata)
+})
+
+
+# join data with GIS df by either name or name_en columns
+world <- ne_countries(scale = "medium", returnclass = "sf")
+map_df_1 <- world %>% left_join(combined_gbl, by = c("name" = "country"))
+map_df_2 <- world %>% left_join(combined_gbl, by = c("name_en" = "country"))
+
+map_df <- bind_rows(map_df_1, map_df_2) %>%
+  select(name, name_en, cases, deaths, ratio, geometry) %>%
+  filter(!is.na(ratio)) %>%
+  distinct()
+
+plot_world_map <- function(df, col_name, map_name){
+  pal <- colorNumeric(
+    palette = map_attrs$pal,
+    domain = range(df[[col_name]], na.rm = TRUE)
+  )
+  
+  leaflet_df <- leaflet(df) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    setView(lng = map_attrs$world_lng, lat = map_attrs$world_lat, zoom = map_attrs$world_zoom) %>%
+    addPolygons(
+      fillColor = ~pal(df[[col_name]]),
+      color = map_attrs$color,
+      weight = 1,
+      fillOpacity = map_attrs$opacity,
+      highlight = highlightOptions(
+        weight = 2,
+        color = "#666",
+        bringToFront = TRUE
+      ),
+      label = ~paste(name, "<br>", round(df[[col_name]], 4))
+    ) %>%
+    addLegend(
+      pal = pal,
+      values = ~df[[col_name]],
+      opacity = map_attrs$opacity,
+      title = "Deaths",
+      position = "bottomright"
+    )
+  
+  saveWidget(leaflet_df, paste(map_name, ".html", sep=""), selfcontained = TRUE)
+  
+  # generate the image file in R studio first, then add the image in markdown after this section.
+  webshot(paste(map_name, ".html", sep=""), file=paste(map_name, ".png", sep=""))  
+}
+
+# exclude US because its cases too high
+map_df_non_us <- map_df %>% mutate(cases=ifelse(name=="United States of America", NA, cases))
+plot_world_map(map_df_non_us, "cases",  "global_cases")
+
+map_df_non_us2 <- map_df %>% mutate(deaths=ifelse(name=="United States of America", NA, deaths))
+plot_world_map(map_df_non_us2, "deaths", "global_deaths")
+
+# exclude death ratios > 4.5
+map_df_low <- map_df %>% mutate(ratio=ifelse(ratio > 4.5, NA, ratio))
+plot_world_map(map_df_low, "ratio",  "global_ratios") 
+```
+
+\newpage
+
+### Global confirmed cases
+
+
+```{r global_top10_cases}
+global_top10 <- combined_gbl %>%
+  select(country, cases, deaths, ratio) %>%
+  arrange(desc(cases)) %>%
+  head(n=10)
+
+kable(global_top10, caption="Global top 10 countries by cases")
+```
+
+![Global confirmed cases](global_cases.png)
+At the global level, US is highest, double the 2nd place, then India, France, Germany, and Brazil.
+
+
+### Global deaths
+
+![Global deaths](global_deaths.png)
+Deaths count are high in Brazil and India, but not in France, Germany, or Japan.
+
+### Global death ratio
+
+![Global death ratio (deaths/cases)](global_ratios.png)
+Checking the deaths divided by cases ratio, we see developed countries, like US, Europe have low death ratios, while developing countries have high death ratios.
+
+\newpage
+
+## Bias
+
+For global Covid data, the underlying data may or may not be completely accurate. 
+
+* Inaccurate data. For example, North Korea reported 1 confirmed case, but 6 deaths. 
+* Under-reporting. China with similar population of India, reported confirmed cases is not even on the top-10 list, and death cases is also likely under-reported. In such cases, we may have to adjust the reported values based on similar country's population.
+
+
+# sessionInfo
+```{r session-info}
+sessionInfo()
+```
+
