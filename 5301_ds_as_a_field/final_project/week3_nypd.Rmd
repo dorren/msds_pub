@@ -9,13 +9,25 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
+```{r install_packages}
+suppressPackageStartupMessages({
+  library(knitr)
+  library(tidyverse)
+  library(maps)
+  library(stringr)
+})
+```
+
 # NYPD Crimes Data Analysis
 
-source file location: https://catalog.data.gov/dataset and find the dataset titled NYPD Shooting Incident Data (Historic). 
+## Data Source
+* source file location: https://catalog.data.gov/dataset
+* search the dataset titled NYPD Shooting Incident Data (Historic), and download the csv.
 
+direct link: https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic
+
+## Read Data
 ```{r get_input}
-library(tidyverse)
-
 file_path <- "NYPD_Shooting_Incident_Data__Historic_.csv"
 data <- read_csv(file_path)
 
@@ -98,7 +110,6 @@ Now we segregate the data by year and boroughs, we can see Bronx and Brooklyn ha
 
 ```{r in_map, echo=TRUE, fig.align='left'}
 # install.packages("maps") if not installed
-library(maps)
 
 states_map <- map_data("state")
 county_map <- map_data("county")
@@ -125,10 +136,10 @@ crimes2024 %>%
 ```
 This graph shows all the incidents occurred in 2024. We can see the highest concentration of data points are in Bronx, then Brooklyn.
 
-# Identify Bias
+# Crime By Race
 
-```{r bias, echo=TRUE}
-library(stringr)
+```{r crime_by_race, echo=TRUE}
+
 
 data2 <- data %>%
   mutate(PERP_RACE = ifelse(is.na(PERP_RACE) | PERP_RACE == "(null)", "UNKNOWN", PERP_RACE))
@@ -155,7 +166,15 @@ by_race %>%
   labs(x="race")
 
 ```
-By grouping the data by perpetrator's race, 72.6% of them are black. This seems overwhelming high. To prove such hypothesis, we need to combine it with city's ethnic composition data, or even compare with other major city's crime data to find out whether this high percentage is valid or biased.
+By grouping the data by perpetrator's race, 72.6% of them are black. This seems overwhelming high. 
+
+
+# Bias
+
+* Racial profiling. Certain demographic or race could be highly targeted and thus over reported. To prove such hypothesis, we need to combine it with city's ethnic composition data, or even compare with other major city's crime data to find out whether this high percentage is valid or biased.
+* If some area's police force is understaffed, crimes in those area could be under reported.
+* Collected data is not detailed enough to verify the nature of the incidents.
+
 
 # sessionInfo
 ```{r session-info, echo=TRUE}
