@@ -13,10 +13,25 @@ suppressPackageStartupMessages({
 })
 
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
 
-## packages used in this notebook
-# install.packages(c("tidyverse", "dplyr", "lubridate", "janitor", "scales"))
-# install.packages(c("leaflet", "sf", "maps", "webshot2", "htmlwidgets", "colorspace"))
+```{r install_packages}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(dplyr)
+  library(lubridate)
+  library(janitor)
+  library(scales)
+  library(leaflet)
+  library(sf)
+  library(maps)
+  library(webshot2)
+  library(htmlwidgets)
+  library(colorspace)
+  library(leaflet)
+  library(rnaturalearth)
+  library(rnaturalearthdata)
+})
 ```
 
 ## Data Source
@@ -30,11 +45,22 @@ Based on [Project instruction](https://www.coursera.org/learn/data-science-as-a-
 
 download these 4 files and put into a local folder named "data".
 
-```{r get_input}
-suppressPackageStartupMessages({
-  library(tidyverse)
-})
+## Knitting
 
+* Assure you have data/ folder created and 4 csv in it.
+* install following packages if you don't have it.
+  ```
+  install.packages(c("tidyverse", "dplyr", "lubridate", "janitor", "scales"))
+  install.packages(c("leaflet", "sf", "maps", "webshot2", "htmlwidgets", "colorspace"))
+  install.packages(c("rnaturalearth", "rnaturalearthdata"))
+  ```
+  
+* in R studio, run the Rmd file first, this will generate the html and image files first.
+  * by clicking the "Run" dropdown selection box, then "Run All Chunks below". 
+  * Alternatively, from top menu, click Code / Run Region / Run All Chunks below.
+* Now you can knit it to pdf.
+
+```{r get_input}
 # download files to local folder data/ first.
 path1 <- "data/time_series_covid19_confirmed_global.csv"
 path2 <- "data/time_series_covid19_confirmed_US.csv"
@@ -49,12 +75,6 @@ death_us  <- read_csv(path4, show_col_types = FALSE)
 
 
 ```{r clean_input}
-suppressPackageStartupMessages({
-  library(dplyr)
-  library(lubridate)
-  library(janitor)
-})
-
 # convert columns into rows. 
 pivot_date_columns <- function(df, exclude_columns, header_name, val_name) {
   df2 <- df %>% 
@@ -84,10 +104,6 @@ death_gbl2 <- pivot_date_columns(death_gbl, exclude_columns, header_name, val_na
 
 
 ```{r analyze_us_cases}
-suppressPackageStartupMessages({
-  library(scales)
-})
-
 # add daily new_cases column
 df <- case_us2 %>%
   select("date", "cases") %>%
@@ -108,7 +124,7 @@ df %>%
 df %>%
   ggplot(aes(x=date, y=new_cases)) +
   geom_line() +
-  ggtitle("New Cases in US") +
+  ggtitle("Daily New Cases in US") +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_y_continuous(labels = comma) 
 
@@ -130,6 +146,7 @@ df2 %>%
   scale_y_continuous(labels = comma)
 
 ```
+
 ```{r prediction_for_future_years}
 new_cases_df <- df2
 new_cases_model <- lm(weekly_new_cases ~ poly(week, 2), data=new_cases_df)
@@ -147,16 +164,8 @@ combined_predict_df %>%
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
+## US Cases by State Analysis
 ```{r us_cases_analysis}
-suppressPackageStartupMessages({
-  library(leaflet)
-  library(sf)
-  library(maps)
-  library(webshot2)
-  library(htmlwidgets)
-  library(colorspace)
-})
-
 # get cases per state
 cases_by_state <- case_us2 %>%
   select("Province_State", "date", "cases") %>%
@@ -197,7 +206,7 @@ attributes(mapcfg) <- list(
   world_zoom = 2.2)
 map_attrs <- attributes(mapcfg)
 
-# plot
+# plot us function
 plot_us_map <- function(df, col_name, map_name){
   pal <- colorNumeric(
     palette = RColorBrewer::brewer.pal(9, map_attrs$palette),
@@ -253,8 +262,9 @@ In this graph, we see California also has the most Covid related deaths, followe
 ### US death ratios
 
 ![US deaths ratios (deaths/cases)](us_ratio.png)
-In this graph, it shows the death ratio, death / confirmed cases. Interestingly, the highest ratios are in Michigan, Florida, and West Virginia.
+In this graph, it shows the death ratio, calculated by death / confirmed cases. Interestingly, the highest ratios are in Michigan, Florida, and West Virginia.
 
+\newpage
 ```{r us_death_ratio_top5}
 us_top_10 <- combined_by_state %>%
   select(state, cases, deaths, ratio) %>%
@@ -264,6 +274,11 @@ us_top_10 <- combined_by_state %>%
 
 kable(us_top_10, caption= "US top 10 states by cases")
 ```
+From the data we can see, although California had the highest cases and death, but it's death ratio was 0.98, lower than the US national average of 1.08. On the map, it shows Florida and Michigan has the highest ratio, Florida has a big population of retired elderly people, and Michigan is notoriously known for its cold weather, those two reason may contribute to the high death ratio.
+
+Another major reason that can influence the death ratio could be how well the healthcare system works in that state. Like California, Illinois, and Texas, which are top 3 in the confirmed cases reported, but all 3 of their death ratios are below US national average (1.08%).
+
+
 
 \newpage
 
@@ -300,30 +315,9 @@ death_gbl3 <- death_gbl2 %>%
 combined_gbl <- death_gbl3 %>%
   left_join(case_gbl3, by = "country") %>%
   mutate(ratio = deaths / cases * 100)
-
-# add USA row
-usa_row <- data.frame(
-  country = "United States of America",
-  cases  = sum(combined_by_state$cases),
-  deaths = sum(combined_by_state$deaths)
-) %>%
-  mutate(ratio = deaths / cases * 100)
-
-# combined_gbl <- bind_rows(combined_gbl, usa_row)
 ```
 
 ```{r global_visualization, eval = knitr::is_html_output()}
-suppressPackageStartupMessages({
-  library(leaflet)
-  library(sf)
-  library(maps)
-  library(webshot2)
-  library(htmlwidgets)
-  library(viridis)
-  library(rnaturalearth)
-  library(rnaturalearthdata)
-})
-
 
 # join data with GIS df by either name or name_en columns
 world <- ne_countries(scale = "medium", returnclass = "sf")
@@ -335,6 +329,7 @@ map_df <- bind_rows(map_df_1, map_df_2) %>%
   filter(!is.na(ratio)) %>%
   distinct()
 
+# plot world function
 plot_world_map <- function(df, col_name, map_name){
   pal <- colorNumeric(
     palette = map_attrs$pal,
@@ -386,16 +381,6 @@ plot_world_map(map_df_low, "ratio",  "global_ratios")
 
 ### Global confirmed cases
 
-
-```{r global_top10_cases}
-global_top10 <- combined_gbl %>%
-  select(country, cases, deaths, ratio) %>%
-  arrange(desc(cases)) %>%
-  head(n=10)
-
-kable(global_top10, caption="Global top 10 countries by cases")
-```
-
 ![Global confirmed cases](global_cases.png)
 At the global level, US is highest, double the 2nd place, then India, France, Germany, and Brazil.
 
@@ -408,7 +393,19 @@ Deaths count are high in Brazil and India, but not in France, Germany, or Japan.
 ### Global death ratio
 
 ![Global death ratio (deaths/cases)](global_ratios.png)
-Checking the deaths divided by cases ratio, we see developed countries, like US, Europe have low death ratios, while developing countries have high death ratios.
+
+
+\newpage
+```{r global_top10_cases}
+global_top10 <- combined_gbl %>%
+  select(country, cases, deaths, ratio) %>%
+  arrange(desc(cases)) %>%
+  head(n=10)
+
+kable(global_top10, caption="Global top 10 countries by cases")
+```
+Similar to US finding, we see developed countries, like Europe, Japan, and Australia also have low death ratios, while developing countries have high death ratios. France and Germany ranked 3rd and 4th in confirmed cases, but their death ratio is less than half of US's ratio. We can safely say their healthcare system works much better than US's.
+
 
 \newpage
 
